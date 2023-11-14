@@ -1,0 +1,15 @@
+steps:
+- task: DownloadPipelineArtifact@2
+  displayName: "Download node_modules from artifact"
+  inputs:
+      buildType: "specific"
+      project: "projectId"
+      definition: "pipelineId"
+      specificBuildWithTriggering: true
+      buildVersionToDownload: "latest"
+      branchName: "refs/heads/$(Build.SourceBranchName)"
+      tags: "dependencies"
+      allowPartiallySucceededBuilds: true
+      allowFailedBuilds: true
+      artifactName: "node_modules_$(Build.SourceBranchName)"
+      targetPath: "node_modules"

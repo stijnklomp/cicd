@@ -1,0 +1,167 @@
+jobs:
+# Check if environment variable is provided for overwriting dependency installation
+- job: CheckIfDependencyInstallationIsForced
+  displayName: "Check if dependency installation is forced through manually setting the environment variable"
+
+  steps:
+  - checkout: none
+  - bash: |
+      if [ "$FORCEINSTALLDEPENDENCIES" = true ] ; then
+        newMustInstallDependencies=true
+      else
+        newMustInstallDependencies=false
+      fi
+
+      echo "Environment variable provided for force installing dependencies: $newMustInstallDependencies"
+
+      echo "##vso[task.setvariable variable=mustInstallDependencies;isOutput=true]$newMustInstallDependencies"
+    name: check_forced_install
+    env:
+      FORCEINSTALLDEPENDENCIES: $(forceInstallDependencies)
+
+# Check if `package-lock.json` was changed
+- job: CheckIfPackageLockWasChanged
+  dependsOn: ["checkIfDependencyInstallationIsForced"]
+  displayName: "Check if package-lock.json was changed"
+  variables:
+    mustInstallDependencies: $[ dependencies.checkIfDependencyInstallationIsForced.outputs['check_forced_install.mustInstallDependencies'] ]
+    organization: "Organization"
+
+  steps:
+  - checkout: self
+    clean: true
+    fetchDepth: 2
+    submodules: false
+    persistCredentials: false
+  - bash: |
+      newMustInstallDependencies=$(mustInstallDependencies)
+
+      if [ "$newMustInstallDependencies" = false ]; then
+        branchName="$(Build.SourceBranchName)"
+
+        if git diff --name-only @~ @ | grep -q 'package-lock.json'; then
+          newMustInstallDependencies=true
+        fi
+
+        echo "Current branch $branchName has a changed package-lock file: $newMustInstallDependencies"
+      else
+        echo "Skipped because 'mustInstallDependencies' is already true"
+      fi
+
+      echo "##vso[task.setvariable variable=mustInstallDependencies;isOutput=true]$newMustInstallDependencies"
+    name: package_lock_changed
+
+# Check if no tagged pipeline artifact already exists
+- job: CheckIfNoTaggedPipelineExists
+  dependsOn: ["checkIfDependencyInstallationIsForced", "CheckIfPackageLockWasChanged"]
+  displayName: "Check if no tagged pipeline already exists"
+  variables:
+    mustInstallDependencies: $[ dependencies.CheckIfPackageLockWasChanged.outputs['package_lock_changed.mustInstallDependencies'] ]
+    organization: "Organization"
+
+  steps:
+  - checkout: none
+  - task: PowerShell@2
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+    inputs:
+      targetType: inline
+      script: |
+          $newMustInstallDependencies = "$(mustInstallDependencies)"
+
+          if ($newMustInstallDependencies -eq $false) {
+            $tagToCheck = "dependencies"
+            $branchName = "$(Build.SourceBranchName)"
+            $url = "https://dev.azure.com/$(organization)/$(System.TeamProject)/_apis/build/builds?branchName=refs/heads/$branchName&tagFilters=dependencies&api-version=7.2-preview.7"
+
+            try {
+                $headers = @{
+                    Authorization = "Bearer $env:SYSTEM_ACCESSTOKEN"
+                    "Content-Type" = "application/json"
+                }
+
+                $result = Invoke-RestMethod -Uri $url -Headers $headers -Method Get
+
+                if ($result.Count -gt 0) {
+                    Write-Host "Pipeline with tag '$tagToCheck' exists for branch '$branchName'"
+                } else {
+                    Write-Host "No pipeline with tag '$tagToCheck' found for branch '$branchName'"
+                    $newMustInstallDependencies = "true"
+                }
+            } catch {
+                Write-Host "API call failed: $_"
+            }
+          } else {
+            Write-Host "Skipped because 'mustInstallDependencies' is already true"
+          }
+
+          Write-Host "##vso[task.setvariable variable=mustInstallDependencies;isOutput=true]$newMustInstallDependencies"
+    name: check_for_tagged_pipeline
+
+# Install dependencies and save them as a tagged pipeline artifact
+- job: InstallDependencies
+  dependsOn: ["checkIfDependencyInstallationIsForced", "CheckIfPackageLockWasChanged", "CheckIfNoTaggedPipelineExists"]
+  displayName: "Install dependencies and save them as a tagged pipeline artifact"
+  variables:
+    mustInstallDependencies: $[ dependencies.CheckIfNoTaggedPipelineExists.outputs['check_for_tagged_pipeline.mustInstallDependencies'] ]
+    organization: "Organization"
+
+  steps:
+  # node_modules
+  - task: NodeTool@0
+    displayName: "Install Node.js"
+    inputs:
+        versionSpec: "16.x"
+  - task: CmdLine@2
+    displayName: "Install dependencies"
+
+    inputs:
+        script: |
+            npm ci
+            mv node_modules $(Build.ArtifactStagingDirectory)
+        workingDirectory: "$(Build.SourcesDirectory)"
+  - task: PublishPipelineArtifact@1
+    displayName: "Upload node_modules as artifact"
+
+    inputs:
+        artifactName: "node_modules_$(Build.SourceBranchName)"
+        targetPath: "$(Build.ArtifactStagingDirectory)/node_modules"
+
+  # Add `dependencies` tag to artifact
+  - task: PowerShell@2
+    displayName: "Add `dependencies` tag to artifact"
+    condition: succeeded() # Only when all previous tasks have succeeded
+    env:
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+    inputs:
+        targetType: inline
+        script: |
+            $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+            $headers.Add("Authorization", "Bearer $env:SYSTEM_ACCESSTOKEN")
+            $headers.Add("Content-Type", "application/json")
+            $uri = "https://dev.azure.com/$(organization)/$(System.TeamProject)/_apis/build/builds/$(Build.BuildId)/tags/dependencies?api-version=6.0"
+            Invoke-RestMethod -Uri $uri -Headers $headers -Method PUT
+
+  # Retain pipeline
+  - bash: |
+      curl \
+      -X POST \
+      -H 'Authorization: Bearer $(System.AccessToken)' \
+      -H 'Content-Type: application/json' \
+      -d '[
+              {
+              "daysValid": 730,
+              "definitionId": $(System.DefinitionId),
+              "ownerId": "User:$(Build.RequestedForId)",
+              "protectPipeline": false,
+              "runId": $(Build.BuildId)
+              }
+          ]' \
+      "$(System.CollectionUri)$(System.TeamProject)/_apis/build/retention/leases?api-version=6.0-preview.1"
+    name: RetainOnSuccess
+    displayName: Retain on pipeline
+  condition: eq(variables.mustInstallDependencies, 'true')
+  pool:
+      vmImage: "ubuntu-latest"

@@ -1,0 +1,60 @@
+pool:
+    name: Azure Pipelines
+
+trigger:
+- "*"
+
+pr:
+- "*"
+
+resources:
+  repositories:
+  - repository: ReusablePipelines
+    type: git
+    name: Organization/pipelineRetain
+    ref: main
+
+stages:
+  - stage: "node_dependecies"
+    jobs:
+    - template: install_node_dependency_stage.yml@ReusablePipelines
+
+    # - job: DownloadNodeDependecies
+    #   dependsOn: ["CheckIfDependencyInstallationIsForced", "CheckIfPackageLockWasChanged", "CheckIfNoTaggedPipelineExists", "InstallDependencies"]
+    #   condition: always()
+    #   steps:
+    #     - template: download_node_dependencies_step.yml@ReusablePipelines
+
+  - stage: "unit_tests"
+    dependsOn: "node_dependecies"
+    jobs:
+    - job: RunUnitTests
+      steps:
+      - template: download_node_dependencies_step.yml@ReusablePipelines
+
+      - task: CmdLine@2
+        inputs:
+          displayName: "Unit tests"
+          script: |
+              npm run ci:test:coverage
+        continueOnError: true
+
+      - task: PublishCodeCoverageResults@1
+        inputs:
+          displayName: "Publish code coverage report within Azure DevOps"
+          workingDirectory: "$(Build.SourcesDirectory)"
+          codeCoverageTool: Cobertura
+          summaryFileLocation: tests/unit/coverage/cobertura-coverage.xml
+
+  - stage: "acceptance_tests"
+    dependsOn: ["node_dependecies", "unit_tests"]
+    jobs:
+    - job: RunAcceptanceTests
+      steps:
+      - template: download_node_dependencies_step.yml@ReusablePipelines
+
+      - task: CmdLine@2
+        inputs:
+          displayName: "Acceptance tests"
+          script: |
+              npm run test:e2e
