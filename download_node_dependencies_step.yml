@@ -1,8 +1,23 @@
-steps:
-- task: DownloadPipelineArtifact@2
-  displayName: "Download node_modules from artifact"
-  inputs:
-      buildType: "specific"
+jobs:
+- job: DownloadFromCurrentBuild
+
+  steps:
+  - task: DownloadPipelineArtifact@2
+    displayName: "Download node_modules from artifact"
+    inputs:
+      buildType: "current"
+      artifactName: "node_modules_$(Build.SourceBranchName)"
+      targetPath: "node_modules"
+
+- job: DownloadFromOlderBuilds
+  dependsOn: DownloadFromCurrentBuild
+  condition: failed()
+
+  steps:
+  - task: DownloadPipelineArtifact@2
+    displayName: "Download node_modules from artifact"
+    inputs:
+    buildType: "specific"
       project: "projectId"
       definition: "pipelineId"
       specificBuildWithTriggering: true

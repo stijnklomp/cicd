@@ -19,12 +19,6 @@ stages:
     jobs:
     - template: install_node_dependency_stage.yml@ReusablePipelines
 
-    # - job: DownloadNodeDependecies
-    #   dependsOn: ["CheckIfDependencyInstallationIsForced", "CheckIfPackageLockWasChanged", "CheckIfNoTaggedPipelineExists", "InstallDependencies"]
-    #   condition: always()
-    #   steps:
-    #     - template: download_node_dependencies_step.yml@ReusablePipelines
-
   - stage: "unit_tests"
     dependsOn: "node_dependecies"
     jobs:
