@@ -22,14 +22,17 @@ stages:
   - stage: "unit_tests"
     dependsOn: "node_dependecies"
     jobs:
+    - template: download_node_dependencies_step.yml@ReusablePipelines
     - job: RunUnitTests
-      steps:
-      - template: download_node_dependencies_step.yml@ReusablePipelines
+      dependsOn: ["DownloadFromCurrentBuild", "DownloadFromOlderBuilds"]
+      condition: always()
 
+      steps:
       - task: CmdLine@2
         inputs:
           displayName: "Unit tests"
           script: |
+              mkdir -p tests/unit/coverage
               npm run ci:test:coverage
         continueOnError: true
 
@@ -43,10 +46,12 @@ stages:
   - stage: "acceptance_tests"
     dependsOn: ["node_dependecies", "unit_tests"]
     jobs:
+    - template: download_node_dependencies_step.yml@ReusablePipelines
     - job: RunAcceptanceTests
-      steps:
-      - template: download_node_dependencies_step.yml@ReusablePipelines
+      dependsOn: ["DownloadFromCurrentBuild", "DownloadFromOlderBuilds"]
+      condition: always()
 
+      steps:
       - task: CmdLine@2
         inputs:
           displayName: "Acceptance tests"
