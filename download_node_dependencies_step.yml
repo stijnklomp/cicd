@@ -1,23 +1,31 @@
-jobs:
-- job: DownloadFromCurrentBuild
+# jobs:
+# - job: CacheNodeModules
+#   variables:
+#     mustInstallDependencies: $[ stageDependencies.node_dependecies.CheckIfNoTaggedPipelineExists.outputs['check_for_tagged_pipeline.mustInstallDependencies']
 
-  steps:
+steps:
+  - task: Cache@2
+    displayName: "Use cached node_modules"
+    inputs:
+      key: 'npm | "$(Agent.OS)" | package-lock.json'
+      restoreKeys: |
+        npm | "$(Agent.OS)"
+      path: $(Build.SourcesDirectory)/node_modules
+      cacheHitVar: CACHE_RESTORED
+    # condition: eq(variables.mustInstallDependencies, 'false')
+
   - task: DownloadPipelineArtifact@2
-    displayName: "Download node_modules from artifact"
+    displayName: "Download node_modules from artifact from current pipeline"
     inputs:
       buildType: "current"
       artifactName: "node_modules_$(Build.SourceBranchName)"
-      targetPath: "node_modules"
+      targetPath: "$(Build.SourcesDirectory)/node_modules"
+    condition: or(eq(variables.mustInstallDependencies, 'true'), not(eq(variables.CACHE_RESTORED, 'true')))
 
-- job: DownloadFromOlderBuilds
-  dependsOn: DownloadFromCurrentBuild
-  condition: failed()
-
-  steps:
   - task: DownloadPipelineArtifact@2
-    displayName: "Download node_modules from artifact"
+    displayName: "Download node_modules from artifact from previous pipeline"
     inputs:
-    buildType: "specific"
+      buildType: "specific"
       project: "projectId"
       definition: "pipelineId"
       specificBuildWithTriggering: true
@@ -27,4 +35,5 @@ jobs:
       allowPartiallySucceededBuilds: true
       allowFailedBuilds: true
       artifactName: "node_modules_$(Build.SourceBranchName)"
-      targetPath: "node_modules"
+      targetPath: "$(Build.SourcesDirectory)/node_modules"
+    condition: and(failed(), or(eq(variables.mustInstallDependencies, 'true'), not(eq(variables.CACHE_RESTORED, 'true'))))
