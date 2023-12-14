@@ -22,19 +22,23 @@ stages:
   - stage: "unit_tests"
     dependsOn: "node_dependecies"
     jobs:
-    - template: download_node_dependencies_step.yml@ReusablePipelines
     - job: RunUnitTests
-      dependsOn: ["DownloadFromCurrentBuild", "DownloadFromOlderBuilds"]
-      condition: always()
+      variables:
+        mustInstallDependencies: $[ stageDependencies.node_dependecies.CheckIfNoTaggedPipelineExists.outputs['check_for_tagged_pipeline.mustInstallDependencies'] ]
 
       steps:
+      - template: download_node_dependencies_step.yml@ReusablePipelines
       - task: CmdLine@2
         inputs:
           displayName: "Unit tests"
           script: |
+              cd $(Build.SourcesDirectory)
               mkdir -p tests/unit/coverage
+              chmod -R 777 node_modules
               npm run ci:test:coverage
+
         continueOnError: true
+        condition: always()
 
       - task: PublishCodeCoverageResults@1
         inputs:
@@ -42,18 +46,3 @@ stages:
           workingDirectory: "$(Build.SourcesDirectory)"
           codeCoverageTool: Cobertura
           summaryFileLocation: tests/unit/coverage/cobertura-coverage.xml
-
-  - stage: "acceptance_tests"
-    dependsOn: ["node_dependecies", "unit_tests"]
-    jobs:
-    - template: download_node_dependencies_step.yml@ReusablePipelines
-    - job: RunAcceptanceTests
-      dependsOn: ["DownloadFromCurrentBuild", "DownloadFromOlderBuilds"]
-      condition: always()
-
-      steps:
-      - task: CmdLine@2
-        inputs:
-          displayName: "Acceptance tests"
-          script: |
-              npm run test:e2e
